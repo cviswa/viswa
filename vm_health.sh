@@ -12,22 +12,27 @@
 # Options:
 #   -w PERCENT   warning threshold (default: 60)
 #   -d PATH      filesystem path to check for disk usage (default: /)
+#   -e ADDRESS   email address to notify when the VM is UNHEALTHY
+#                (uses the machine's "mail" command; it must be
+#                configured with a working mail server to deliver)
 #   -h           show this help
 
 set -euo pipefail
 
 THRESHOLD=60
 DISK_PATH="/"
+NOTIFY_EMAIL=""
 
 usage() {
     grep '^#' "$0" | grep -v '^#!/' | sed 's/^# \{0,1\}//'
     exit 0
 }
 
-while getopts "w:d:h" opt; do
+while getopts "w:d:e:h" opt; do
     case "$opt" in
         w) THRESHOLD="$OPTARG" ;;
         d) DISK_PATH="$OPTARG" ;;
+        e) NOTIFY_EMAIL="$OPTARG" ;;
         h) usage ;;
         *) usage ;;
     esac
@@ -171,6 +176,67 @@ if $EXPLAIN; then
             echo "  - $r"
         done
     fi
+fi
+
+# ---------------------------------------------------------------------------
+# Email notification (only sent when the VM is UNHEALTHY and an address was
+# given with -e). Uses the standard "mail" command, so a mail agent such as
+# mailx/ssmtp must already be configured on the machine.
+# ---------------------------------------------------------------------------
+
+send_email() {
+    local body
+    body=$(cat <<EOF
+The VM "$(hostname)" is UNHEALTHY as of $(date '+%Y-%m-%d %H:%M:%S')
+(threshold: any metric above ${THRESHOLD}% utilization).
+
+CPU:     ${CPU}% utilized
+Memory:  ${MEM}% utilized
+Disk:    ${DISK}% utilized (filesystem: ${DISK_PATH})
+
+Reasons:
+EOF
+)
+    local r
+    for r in "${REASONS[@]}"; do
+        body+=
+    done
+
+    if command -v mail >/dev/null 2>&1; then
+        if printf '%s\n' "$body" | mail -s "VM $(hostname) is UNHEALTHY" "$NOTIFY_EMAIL"; then
+            echo " Email notification sent to $NOTIFY_EMAIL."
+        else
+            echo " Failed to send email notification to $NOTIFY_EMAIL (mail command errored)." >&2
+        fi
+    else
+        echo " Email notification skipped: the 'mail' command is not installed on this machine." >&2
+    fi
+}
+
+if [[ -n "$NOTIFY_EMAIL" && "$STATUS" == "UNHEALTHY" ]]; then
+    echo
+    send_email
+fi
+
+# Exit codes: 0 = healthy, 1 = unhealthy (handy for cron/monitoring jobs).
+[[ "$STATUS" == "HEALTHY" ]] && exit 0 || exit 1
+\n  - '"$r"
+    done
+
+    if command -v mail >/dev/null 2>&1; then
+        if printf '%s\n' "$body" | mail -s "VM $(hostname) is UNHEALTHY" "$NOTIFY_EMAIL"; then
+            echo " Email notification sent to $NOTIFY_EMAIL."
+        else
+            echo " Failed to send email notification to $NOTIFY_EMAIL (mail command errored)." >&2
+        fi
+    else
+        echo " Email notification skipped: the 'mail' command is not installed on this machine." >&2
+    fi
+}
+
+if [[ -n "$NOTIFY_EMAIL" && "$STATUS" == "UNHEALTHY" ]]; then
+    echo
+    send_email
 fi
 
 # Exit codes: 0 = healthy, 1 = unhealthy (handy for cron/monitoring jobs).
